@@ -1,0 +1,390 @@
+/***********************************************************************
+mycat:命令用于连接文件并打印到标准输出设备上。
+
+# 功能:
+* 能显示一个或多个文件内容
+
+* 能根据shell的传入参数的不同参数实现不同功能:
+ * -n 或 --number：由 1 开始对所有输出的行数编号。
+
+ * -b 或 --number-nonblank：和 -n 相似，只不过对于空白行不编号。
+
+ * -s 或 --squeeze-blank：当遇到有连续两行以上的空白行，就代换为一行的空白行。
+
+ * -v 或 --show-nonprinting：使用 ^ 和 M- 符号，除了 LFD 和 TAB 之外。
+
+ * -E 或 --show-ends : 在每行结束处显示 $。
+
+ * -T 或 --show-tabs: 将 TAB 字符显示为 ^I。
+
+ * -A, --show-all：等价于 -vET。
+
+ * -e：等价于"-vE"选项；
+
+ * -t：等价于"-vT"选项；
+
+# mycat语法格式
+
+mycat [-AbeEnstTuv] [--help] [--version] fileName
+
+# 范例：
+把 textfile1 的档案内容加上行号后输入 textfile2 这个档案里:
+mycat -n textfile1 > textfile2
+
+# 版本：1.0
+
+ * 如果程序后直接带文件则会将文件内容输入到标准输出
+ * 如果参数不对则会报错
+
+***********************************************************************/
+
+
+#include <ctype.h>
+#include <err.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <locale.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <malloc.h>
+#include <string.h>
+#include <unistd.h>
+#include <wchar.h>
+#include <wctype.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
+/*各个参数的标志变量*/
+static int nflag,bflag,sflag,vflag,Eflag,Tflag,Aflag,hflag,Vflag;
+static void show_help(char *argv);
+static char get_option_flag(int argc, char *argv);
+static void file_copy(FILE* file1,FILE* file2);
+static int line_number_add(FILE* input_file, FILE* output_file, char* argv);
+int g_option_flag = 0;
+char g_option = '/0';
+
+/***********************************************************************
+Function : show_help
+
+Description: 打印帮助
+
+Ca11s:
+printf()
+
+Called By:
+main()
+
+Input:
+argv:控制台参数的字符串指针首地址
+
+Output:
+无
+Return:
+无
+Others:
+无
+***********************************************************************/
+void show_help(char *argv)
+{
+    printf("%s:please input your option:\n",argv);
+    printf("mycat [-AbEnsTv] fileName.\n");
+    printf(" -n ：由 第1行 开始对所有输出的行数编号。\n");
+    printf(" -b ：与 -n 相似，只不过对于空白行不编号。\n");
+    printf(" -s ：当遇到有连续两行以上的空白行，就代换为一行的空白行。\n");
+    printf(" -v ：使用 ^ 和 M- 符号，除了 LFD 和 TAB 之外。\n");
+    printf(" -E ：在每行结束处显示 $。\n");
+    printf(" -T ： 将 TAB 字符显示为 ^I。\n");
+    printf(" -A ：等价于 -vET。\n");
+    printf(" -h ：显示帮助。\n");
+    printf(" -V ：显示版本。\n");
+
+}
+
+/***********************************************************************
+Function : get_option_flag
+
+Description: 判断是否是带參命令行
+
+Ca11s:
+int getopt(int argc,char * const argv[ ],const char * optstring);
+while()
+switch()
+
+Called By:
+main()
+
+Input:
+argc:控制台输入的参数的个数
+
+argv:控制台参数的字符串指针首地址
+
+Output:
+无
+Return:
+flag:用于判断控制台输入是否含有需求参数
+Others:
+无
+***********************************************************************/
+char get_option_flag(int argc, char *argv)
+{
+
+    /*获取控制台参数中间变量*/
+    char ch_option = 0;
+
+    while((ch_option = getopt(argc, argv,"nbsvETAhV::"))!= -1)
+    {
+        /*获取控制台传入的参数对各个标志位进行置 1*/
+        switch(ch_option)
+        {
+            /*如果获得的参数为 -n 则将由 1 开始对所有输出的行数编号。*/
+             case 'n':
+             {
+                 nflag = 1;
+                 break;
+             }
+             /*与 -n 类似，下同*/
+             case 'b':
+             {
+                 bflag = 1;
+                 break;
+             }
+             case 's':
+             {
+                 sflag = 1;
+                 break;
+             }
+             case 'v':
+             {
+                 vflag = 1;
+                 break;
+             }
+             case 'E':
+             {
+                 Eflag = 1;
+                 break;
+             }
+             case 'T':
+             {
+                 Tflag = 1;
+                 break;
+             }
+             case 'A':
+             {
+                 Aflag = 1;
+                 break;
+             }
+             case 'h':
+             {
+                 hflag = 1;
+                 break;
+             }
+             case 'V':
+             {
+                 Vflag = 1;
+                 break;
+             }
+             default :
+             {
+                 g_option_flag = 0;
+                 break;
+             }
+        }
+    }
+
+    /*进行标志的判断*/
+    g_option_flag = (nflag||
+            bflag||
+            sflag||
+            vflag||
+            Eflag||
+            Tflag||
+            Aflag||
+            hflag||
+            Vflag);
+
+    return ch_option;
+}
+
+/***********************************************************************
+Function : file_copy
+
+Description: 用于将指定文件输出到另一文件中
+
+Ca11s:
+int getc(FILE *stream);
+int putc(int ch,FILE*fp)；
+
+
+Called By:
+main()
+
+Input:
+input_file：需要进行操作的目标文件
+output_file：接受file1输出的目标文件
+
+Output:
+无
+
+Return:
+无
+
+Others:
+无
+***********************************************************************/
+void file_copy(FILE* input_file, FILE* output_file)
+{
+    /*用于输出文件内容的中间变量*/
+    char temp = 0;
+    while((temp = getc(input_file)) != EOF)
+    {
+        putc(temp,output_file);
+    }
+
+}
+
+int line_number_add(FILE* input_file, FILE* output_file, char* argv)
+{
+
+    input_file = fopen(argv, "rb");
+    if(input_file == NULL)
+    {
+        printf("No such file:%s",argv);
+        return 0;
+    }
+    int int_line_num = 1;
+    char ch_buffer[256] = {0};
+
+    while(fgets(ch_buffer, 256, input_file) != NULL)
+    {
+        fprintf(output_file, "%4d:%s", int_line_num++, ch_buffer);
+    }
+
+    fclose(input_file);
+    return 0;
+}
+
+
+
+
+int main(int argc,char *argv[])
+{
+/*通过判断命令行参数的个数来进行下一步编程*/
+    /*只有一个参数时显示帮助*/
+    if(argc == 1)
+    {
+        show_help(argv[0]);
+        return 0;
+    }
+    /*有两个参数时*/
+    else if(argc == 2)
+    {
+        char ch_option = '0';
+
+        printf("Now you are already in argc==2\n");
+
+        /*获取控制台选项参数内容并进行标志位判断*/
+        ch_option = get_option_flag(argc, argv);
+        /*带参数且是[-AbEnsTv]则显示提示*/
+        if(g_option_flag == 1)
+        {
+            printf("Your format is not right,follow this message:\n");
+            printf("mycat [-AbEnsTv] fileName.\n");
+        }
+        /*未带参数则默认直接带文件，直接将文件内容输出到标准输出*/
+        else
+        {
+            FILE *fp = NULL;
+        /*创建文件句柄，访问文件，若文件无法找到则报错，关闭文件*/
+            if((fp = fopen(argv[1], "r")) == NULL)
+            {
+                printf("no such file:%s",argv[1]);
+                fclose(fp);
+                return 0;
+            }
+        /*访问成功则将文件内容拷贝至标准输出*/
+            else
+            {
+                file_copy(fp, stdout);
+                fclose(fp);
+            }
+        }
+
+    }
+    /*输入三个参数且含有指定参数&&(g_option_flag == 1)*/
+    else if((argc == 3))
+    {
+
+        printf("Now your input have 3 argc\n");
+        FILE *fp = NULL;
+        /*获取控制台参数中间变量*/
+        char ch_option = 0;
+
+        ch_option = getopt(argc, argv,"nbsvETAhV::");
+            /*获取控制台传入的参数对各个标志位进行置 1*/
+            switch(ch_option)
+            {
+                /*如果获得的参数为 -n 则将由 1 开始对所有输出的行数编号。*/
+                 case 'n':
+                 {
+                     line_number_add(fp, stdout, argv[2]);
+                     nflag = 1;
+                     break;
+                 }
+                 /*与 -n 类似，下同*/
+                 case 'b':
+                 {
+                     bflag = 1;
+                     break;
+                 }
+                 case 's':
+                 {
+                     sflag = 1;
+                     break;
+                 }
+                 case 'v':
+                 {
+                     vflag = 1;
+                     break;
+                 }
+                 case 'E':
+                 {
+                     Eflag = 1;
+                     break;
+                 }
+                 case 'T':
+                 {
+                     Tflag = 1;
+                     break;
+                 }
+                 case 'A':
+                 {
+                     Aflag = 1;
+                     break;
+                 }
+                 case 'h':
+                 {
+                     hflag = 1;
+                     break;
+                 }
+                 case 'V':
+                 {
+                     Vflag = 1;
+                     break;
+                 }
+                 default :
+                 {
+                     printf("no such option");
+                     break;
+                 }
+            }
+        if((fp = fopen(argv[2], "r")) == NULL)
+        {
+            printf("no such file:%s",argv[1]);
+            fclose(fp);
+            return 0;
+        }
+    }
+
+    return 0;
+}
+

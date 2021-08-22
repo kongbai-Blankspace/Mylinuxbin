@@ -1,0 +1,363 @@
+/***************************************************************
+Mychmods:控制用户对文件的权限
+
+# 功能:
+* 能改变用户对文件的权限，能根据不同的传参进行对应的操作
+
+# 语法
+
+chmod [-cfvR] [--help] [--version] mode file...
+
+
+# 参数说明
+* mode说明
+    [ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+
+ * u 表示该文件的拥有者，g 表示与该文件的拥有者属于同一个群体(group)者，o 表示其他以外的人，a 表示这三者皆是。
+ * + 表示增加权限、- 表示取消权限、= 表示唯一设定权限。
+ * r 表示可读取，w 表示可写入，x 表示可执行，X 表示只有当该文件是个子目录或者该文件已经被设定过为可执行。
+    也可用数字表达
+    r = 4,w = 2,x = 1
+
+* 其他参数说明：
+ * -c : 若该文件权限确实已经更改，才显示其更改动作
+ * -f : 若该文件权限无法被更改也不要显示错误讯息
+ * -v : 显示权限变更的详细资料
+ * -R : 对目前目录下的所有文件与子目录进行相同的权限变更(即以递归的方式逐个变更)
+ * --help : 显示辅助说明
+ * --version : 显示版本
+
+# 范例：
+* 将文件 file1.txt 设为所有人皆可读取
+chmod ugo+r file1.txt
+
+* 将文件 file1.txt 设为所有人皆可读取 :
+chmod a+r file1.txt
+
+* 将文件 file1.txt 与 file2.txt 设为该文件拥有者，与其所属同一个群体者可写入，但其他以外的人则不可写入 :
+chmod ug+w,o-w file1.txt file2.txt
+
+* 为 ex1.py 文件拥有者增加可执行权限:
+chmod u+x ex1.py
+
+* 将目前目录下的所有文件与子目录皆设为任何人可读取 :
+chmod -R a+r *
+
+****************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <err.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <fts.h>
+#include <limits.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+static void get_mode(mode_t *mode , int user_mode_u, int group_mode_g ,
+    int other_mode_o, int user_mode_flag, int group_mode_flag,
+    int other_mode_flag, int permission_read, int permission_wirte,
+    int permission_execute, int operator_action);
+
+/***********************************************************************
+Function : get_mode
+
+Description: 获取控制台模式参数
+
+Ca11s:
+switch()
+
+Called By:
+main()
+
+Input:
+mode_t mode = 0;         //文件的总权限
+int user_mode_u = 0;     //文件所有者的权限
+int group_mode_g = 0;    //文件所属群组的权限
+int other_mode_o = 0;    //其他用户权限
+int user_mode_flag = 0;     //文件所有者权限标志
+int group_mode_flag = 0;    //文件所属群组权限标志
+int other_mode_flag = 0;    //其他用户权限标志
+int permission_read = 0;       //读权限
+int permission_wirte = 0;      //写权限
+int permission_execute = 0;    //执行权限
+int operator_action = 0;                 //操作行为:'+' \ '-' \ '='
+
+Output:
+无
+Return:
+无
+Others:
+无
+***********************************************************************/
+void get_mode(mode_t *mode , int user_mode_u, int group_mode_g ,
+    int other_mode_o, int user_mode_flag, int group_mode_flag,
+    int other_mode_flag, int permission_read, int permission_wirte,
+    int permission_execute, int operator_action)
+{
+    switch(operator_action)
+    {
+        //如果是增加权限，则将该对应的标志位和标志宏进行 或 运算 即 |权限宏
+        case '+':
+        {
+            //文件所有者
+            if(user_mode_flag)
+            {
+                if(permission_read)
+                    *mode |= S_IRUSR;
+                if(permission_wirte)
+                    *mode |= S_IWUSR;
+                if(permission_execute)
+                    *mode |= S_IXUSR;
+            }
+            //文件用户组
+            if(group_mode_flag)
+            {
+                if(permission_read)
+                    *mode |= S_IRGRP;
+                if(permission_wirte)
+                    *mode |= S_IWGRP;
+                if(permission_execute)
+                    *mode |= S_IXGRP;
+            }
+            //其他用户
+            if(other_mode_flag)
+            {
+                if(permission_read)
+                    *mode |= S_IROTH;
+                if(permission_wirte)
+                    *mode |= S_IWOTH;
+                if(permission_execute)
+                    *mode |= S_IXOTH;
+            }
+            break;
+        }
+        //如果是减少权限，则将文件本身的权限与权限宏进行 （本身权限 &= ~权限宏） 运算
+        case '-':
+        {
+            if(user_mode_flag)
+            {
+                if(permission_read)
+                    *mode &= ~S_IRUSR;
+                if(permission_wirte)
+                    *mode &= ~S_IWUSR;
+                if(permission_execute)
+                    *mode &= ~S_IXUSR;
+            }
+            if(group_mode_flag)
+            {
+                if(permission_read)
+                    *mode &= ~S_IRGRP;
+                if(permission_wirte)
+                    *mode &= ~S_IWGRP;
+                if(permission_execute)
+                    *mode &= ~S_IXGRP;
+            }
+            if(other_mode_flag)
+            {
+                if(permission_read)
+                    *mode &= ~S_IROTH;
+                if(permission_wirte)
+                    *mode &= ~S_IWOTH;
+                if(permission_execute)
+                    *mode &= ~S_IXOTH;
+            }
+            break;
+        }
+        case '=':
+        {
+            if(user_mode_flag)
+            {
+                if(permission_read)
+                    *mode &= S_IRUSR;
+                if(permission_wirte)
+                    *mode &= S_IWUSR;
+                if(permission_execute)
+                    *mode &= S_IXUSR;
+            }
+            if(group_mode_flag)
+            {
+                if(permission_read)
+                    *mode &= S_IRGRP;
+                if(permission_wirte)
+                    *mode &= S_IWGRP;
+                if(permission_execute)
+                    *mode &= S_IXGRP;
+            }
+            if(other_mode_flag)
+            {
+                if(permission_read)
+                    *mode &= S_IROTH;
+                if(permission_wirte)
+                    *mode &= S_IWOTH;
+                if(permission_execute)
+                    *mode &= S_IXOTH;
+            }
+            break;
+        }
+
+    }
+
+
+}
+
+
+/*
+//获取控制台选项参数
+int get_option(char argc, char* argv[])
+{
+    getopt(argc, argv, "c:f:v:R:");
+
+}
+*/
+
+int main(int argc, char* argv[])
+{
+
+	mode_t mode = 0;         //文件的总权限
+	int user_mode_u = 0;     //文件所有者的权限
+	int group_mode_g = 0;    //文件所属群组的权限
+	int other_mode_o = 0;    //其他用户权限
+
+	int user_mode_flag = 0;     //文件所有者权限标志
+	int group_mode_flag = 0;    //文件所属群组权限标志
+	int other_mode_flag = 0;    //其他用户权限标志
+
+	int permission_read = 0;       //读权限
+	int permission_wirte = 0;      //写权限
+	int permission_execute = 0;    //执行权限
+
+	int operator_action = 0;                 //操作行为:'+' \ '-' \ '='
+
+    struct stat tagfile_mode_buf;    //文件本身的权限
+
+    int file_num = 0;      //文件个数
+    short group_num = 0;    //操作的文件所属对象的个数（u g o a）
+	//检查输入形式是否错误
+	if(argc < 3)
+	{
+        printf("please put in right format:\n%s <mode> <target file>\n",argv[0]);
+        return 0;
+	}
+
+	for(file_num = 2;file_num < argc; file_num++)
+	{
+	    //区分出是数字格式，还是字符串格式
+
+	    //如果数字格式则需把十进制转换为八进制
+	    if(argv[1][0] >= '0' && argv[1][0] <= '7')
+	    {
+            mode = (unsigned)atoi(argv[1]);        //将字符串型转换成为无符号整型
+            //判断权限值是否输入正确
+            if(mode > 777 || mode < 0)
+            {
+                printf("Your input are not right: %d\n", mode);
+                return 0;
+            }
+	        //将十进制转换为八进制
+            user_mode_u = mode / 100;            //百位
+            group_mode_g = (mode / 10) % 10;     //十位
+            other_mode_o = mode - user_mode_u * 100 - group_mode_g * 10;            //个位
+
+            //十进制转换成八进制方可被chmod函数识别
+            mode = user_mode_u * 8 * 8 + group_mode_g * 8 + other_mode_o * 1;
+	    }
+        //字符串格式
+	    else
+	    {
+            //判断文件是否读取正常
+            if(lstat(argv[file_num], &tagfile_mode_buf) == -1)
+            {
+                fprintf(stderr, "Line: %d", __LINE__);
+                perror("lstat\n");
+                return 0;
+            }
+            //获取文件原有的权限
+            mode = tagfile_mode_buf.st_mode;
+            //循环读取控制台参数内容
+            while(argv[1][group_num] != '\0')
+            {
+                while(argv[1][group_num] != ',' && argv[1][group_num] != '\0')
+                {
+                //判断入参将对应的标志位 置1
+                    switch(argv[1][group_num])
+                    {
+                        case 'u':
+                         {
+                             user_mode_flag = 1;
+                             break;
+                         }
+                         case 'g':
+                         {
+                             group_mode_flag = 1;
+                             break;
+                         }
+                         case 'o':
+                         {
+                             other_mode_flag = 1;
+                             break;
+                         }
+                         case 'a':
+                         {
+                             user_mode_flag = 1;
+                             group_mode_flag = 1;
+                             other_mode_flag = 1;
+                             break;
+                         }
+                         case '+':
+                         {
+                             operator_action = '+';
+                             break;
+                         }
+                         case '-':
+                         {
+                             operator_action = '-';
+                             break;
+                         }
+                         case '=':
+                         {
+                             operator_action = '=';
+                             break;
+                         }
+                         case 'r':
+                         {
+                             permission_read = 'r';
+                             break;
+                         }
+                         case 'w':
+                         {
+                             permission_wirte = 'w';
+                             break;
+                         }
+                         case 'x':
+                         {
+                             permission_execute = 'x';
+                             break;
+                         }
+
+                    }
+                    group_num++;
+                }
+                get_mode(&mode ,user_mode_u, group_mode_g,
+                         other_mode_o, user_mode_flag, group_mode_flag,
+                         other_mode_flag, permission_read, permission_wirte,
+                         permission_execute, operator_action);
+                if(argv[1][file_num] == ',')
+                {
+                    file_num++;
+                }
+            }
+
+	    }
+	    printf("tagfile:%s\n",argv[file_num]);
+        if(chmod(argv[file_num], mode) == -1)
+        {
+            perror("chmod error");
+            return 0;
+        }
+	}
+    return 0;
+}
